@@ -1,0 +1,62 @@
+# 環境変数（機密情報を含む）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 仮想環境
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code設定（個人設定）
+.claude/
+
+# ログファイル
+*.log
+
+# テストディレクトリ（非公開）
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OCI Functions
+.oci/
+func_*.zip
+
+# 個人的なメモやドキュメント（公開しない）
+構築手順書.md
+oci_github_release_notice_requirements.md
+TROUBLESHOOTING_REPORT.md
