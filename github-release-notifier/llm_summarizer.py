@@ -3,20 +3,22 @@ LLM要約モジュール
 """
 
 import os
+from typing import Optional
+
 from openai import OpenAI
 
 
 class LLMSummarizer:
     """OpenAI APIを使用したリリースノート要約"""
 
-    def __init__(self, api_key: str, model_name: str = "gpt-5-mini", temperature: float = 0.3):
+    def __init__(self, api_key: str, model_name: str = "gpt-6-luna", temperature: Optional[float] = None):
         """
         初期化
 
         Args:
             api_key: OpenAI API Key
             model_name: 使用するモデル名
-            temperature: モデルの温度パラメータ
+            temperature: モデルの温度パラメータ（None の場合は送信せずAPIデフォルトを使用）
         """
         self.client = OpenAI(api_key=api_key)
         self.model_name = model_name
@@ -71,9 +73,9 @@ class LLMSummarizer:
             APIパラメータ辞書
 
         Note:
-            GPT-5シリーズ（gpt-5, gpt-5-mini, gpt-5-nano）は推論モデルで、
-            内部推論にトークンを消費するため、max_tokensを設定しない。
-            また、temperatureはデフォルト値（1）のみサポート。
+            推論モデル（gpt-5系・gpt-6系・o系など）はtemperatureのデフォルト値以外を
+            受け付けないため、temperatureは明示的に指定された場合のみ送信する。
+            同じ理由で、内部推論にトークンを消費するためmax_tokensも設定しない。
         """
         api_params = {
             "model": self.model_name,
@@ -83,8 +85,7 @@ class LLMSummarizer:
             ]
         }
 
-        # GPT-5シリーズ以外の場合のみtemperatureを設定
-        if not self.model_name.startswith("gpt-5"):
+        if self.temperature is not None:
             api_params["temperature"] = self.temperature
 
         return api_params

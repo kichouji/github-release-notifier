@@ -4,11 +4,10 @@
 OCI Functionのロジックを fn invoke を使わずにローカルで実行します
 """
 
+import argparse
+import logging
 import os
 import sys
-import json
-import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # 同じディレクトリのモジュールをインポート
@@ -17,104 +16,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 from github_client import GitHubClient
 from llm_summarizer import LLMSummarizer
 from slack_notifier import SlackNotifier
-from func import ReleaseInfo, _extract_release_info
+from func import _extract_release_info, order_releases, summarize_releases_parallel
 
 
-def _summarize_single_release(
-    release_data: dict,
-    llm_summarizer: LLMSummarizer,
-    openai_model: str,
-    index: int,
-    total: int
-) -> tuple[dict, str, str]:
-    """
-    単一のリリースを要約（スレッドプール用）
-
-    Args:
-        release_data: リリースデータ（notification + release）
-        llm_summarizer: LLM要約クライアント
-        openai_model: 使用するOpenAIモデル名（未使用だがシグネチャ保持のため残す）
-        index: インデックス（未使用だがシグネチャ保持のため残す）
-        total: 総数（未使用だがシグネチャ保持のため残す）
-
-    Returns:
-        (リリースデータ, 要約, エラーメッセージ)
-    """
-    info = _extract_release_info(release_data)
-
-    try:
-        summary = llm_summarizer.summarize(
-            repository=info.repository_name,
-            version=info.tag_name,
-            release_note=info.release_body
-        )
-        return (release_data, summary, None)
-
-    except Exception as e:
-        error_msg = f"{info.repository_name} {info.tag_name}: {str(e)}"
-        return (release_data, None, error_msg)
-
-
-def _summarize_all_releases_parallel(
-    release_notifications: list,
-    llm_summarizer: LLMSummarizer,
-    openai_model: str
-) -> list[tuple[dict, str, str]]:
-    """
-    全てのリリースを並列要約（ThreadPoolExecutor使用）
-
-    Args:
-        release_notifications: リリース通知リスト
-        llm_summarizer: LLM要約クライアント
-        openai_model: 使用するOpenAIモデル名
-
-    Returns:
-        [(リリースデータ, 要約, エラーメッセージ), ...]
-    """
-    print(f"🚀 Starting parallel summarization for {len(release_notifications)} releases")
-
-    # 結果を格納する辞書（インデックスで順序を保持）
-    results_dict = {}
-
-    # ThreadPoolExecutorで並列実行
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        # 全てのタスクを投入
-        future_to_index = {
-            executor.submit(
-                _summarize_single_release,
-                release_data,
-                llm_summarizer,
-                openai_model,
-                idx,
-                len(release_notifications)
-            ): idx
-            for idx, release_data in enumerate(release_notifications, 1)
-        }
-
-        # 完了したタスクから結果を収集
-        for future in as_completed(future_to_index):
-            index = future_to_index[future]
-            try:
-                result = future.result()
-                results_dict[index] = result
-                release_data, summary, error_msg = result
-                info = _extract_release_info(release_data)
-
-                if error_msg:
-                    print(f"  [{index}/{len(release_notifications)}] Error: {info.repository_name} {info.tag_name}")
-                else:
-                    print(f"  [{index}/{len(release_notifications)}] Completed: {info.repository_name} {info.tag_name} ({len(summary)} chars)")
-            except Exception as e:
-                print(f"  [{index}/{len(release_notifications)}] Unexpected error: {e}")
-                # エラーの場合は空の結果を格納
-                results_dict[index] = (release_notifications[index-1], None, str(e))
-
-    # インデックス順にソートして結果を返す
-    results = [results_dict[i] for i in sorted(results_dict.keys())]
-    print(f"✓ Completed parallel summarization for {len(release_notifications)} releases")
-    print()
-
-    return results
+def _create_console_logger() -> logging.Logger:
+    """コンソールにメッセージのみを出力するロガーを作成"""
+    logger = logging.getLogger("local_test")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+    logger.propagate = False
+    return logger
 
 
 def main():
@@ -133,7 +47,7 @@ def main():
     # 環境変数から設定を取得
     github_token = os.getenv("GITHUB_TOKEN")
     openai_api_key = os.getenv("OPENAI_API_KEY")
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-6-luna")
     slack_webhook_url = os.getenv("SLACK_WEBHOOK_URL")
 
     # 必須環境変数のチェック
@@ -151,7 +65,7 @@ def main():
         print("または --dry-run オプションを使用してください")
         sys.exit(1)
 
-    print(f"⚙️  設定:")
+    print("⚙️  設定:")
     print(f"  - テストモード: {args.test_mode}")
     print(f"  - 取得期間: 過去{args.since_hours}時間")
     print(f"  - OpenAIモデル: {openai_model}")
@@ -184,25 +98,22 @@ def main():
             print("📭 リリース通知はありません")
             return
 
-        # テストモードの場合は1件のみに制限
+        # テストモードは1件のみ、通常モードは古い順に処理
+        release_notifications = order_releases(release_notifications, args.test_mode)
         if args.test_mode:
-            release_notifications = release_notifications[:1]
             print(f"⚠️  テストモード: {len(release_notifications)} 件のみ処理")
-            print()
         else:
-            # 通常モードの場合は古い順に処理（リストを逆順にする）
-            release_notifications = release_notifications[::-1]
-            print(f"📅 古い順に処理します")
-            print()
-
-        # 全てのリリースを並列で要約（ThreadPoolExecutor使用）
-        print("🔄 並列要約を開始...")
+            print("📅 古い順に処理します")
         print()
-        summarization_results = _summarize_all_releases_parallel(
+
+        # 全てのリリースを並列で要約
+        print("🔄 並列要約を開始...")
+        summarization_results = summarize_releases_parallel(
             release_notifications=release_notifications,
             llm_summarizer=llm_summarizer,
-            openai_model=openai_model
+            logger=_create_console_logger()
         )
+        print()
 
         # 要約結果を古い順にSlackに送信
         sent_count = 0

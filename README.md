@@ -70,7 +70,7 @@ pip install -r github-release-notifier/requirements.txt
 ```bash
 export GITHUB_TOKEN='your_github_personal_access_token_here'
 export OPENAI_API_KEY='your_openai_api_key_here'
-export OPENAI_MODEL='gpt-5-mini'  # 使用するモデル
+export OPENAI_MODEL='gpt-6-luna'  # 使用するモデル
 export SLACK_WEBHOOK_URL='https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
 ```
 
@@ -84,7 +84,7 @@ cp .env.example .env
 ## 機能
 
 - GitHub Notificationsから24時間以内のリリース情報を取得
-- OpenAI（LangChain）でリリースノートを日本語要約
+- OpenAI APIでリリースノートを日本語要約
 - Slackへ自動通知
 - OCI Functions対応
 - ローカルテスト実行可能（Dry Run / Test Mode）

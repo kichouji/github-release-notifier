@@ -6,11 +6,11 @@ GitHubでウォッチしているOSSの新しいリリース情報を、LLMで�
 
 ## 技術スタック
 
-- **言語**: Python 3.11
+- **言語**: Python 3.12
 - **実行環境**: OCI Functions (Oracle Cloud Infrastructure)
 - **主要ライブラリ**:
   - `requests`: GitHub API、Slack API通信
-  - `langchain-openai`: LLM要約処理
+  - `openai`: LLM要約処理（OpenAI Python SDK）
   - `fdk`: OCI Functions Python SDK
 
 ## プロジェクト構造
@@ -22,7 +22,7 @@ github-release-notifier/
 │   ├── func.py                     # メインハンドラー（OCI Function エントリーポイント）
 │   ├── local_test.py               # ローカルテストスクリプト
 │   ├── github_client.py            # GitHub Notifications API操作
-│   ├── llm_summarizer.py           # LLM要約処理（LangChain + OpenAI）
+│   ├── llm_summarizer.py           # LLM要約処理（OpenAI SDK）
 │   ├── slack_notifier.py           # Slack通知処理（Webhook）
 │   ├── prompt_template.txt         # LLMプロンプトテンプレート
 │   └── requirements.txt            # 依存パッケージ
@@ -45,7 +45,7 @@ github-release-notifier/
 
 ### 3. `llm_summarizer.py` - LLM要約
 - `summarize_release_notes()`: リリースノートを日本語要約
-- LangChain + OpenAI APIを使用
+- OpenAI Python SDK（Chat Completions API）を使用
 - プロンプトテンプレートから要約指示を読み込み
 - 要約観点: 新機能重視、バグ修正無視、2000文字以内
 
@@ -62,7 +62,7 @@ github-release-notifier/
 - `SLACK_WEBHOOK_URL`: Slack Incoming Webhook URL
 
 ### オプション
-- `OPENAI_MODEL`: OpenAIモデル名（デフォルト: `gpt-5-mini`）
+- `OPENAI_MODEL`: OpenAIモデル名（デフォルト: `gpt-6-luna`）
 
 ## デプロイメント
 
@@ -145,7 +145,7 @@ echo '{"test_mode": true}' | fn invoke github-release-app github-release-notifie
 
 ### バージョン管理
 - `func.yaml`のversionフィールドでバージョン管理
-- 現在: v0.0.16
+- 現在: v0.0.18
 
 ## トラブルシューティング
 

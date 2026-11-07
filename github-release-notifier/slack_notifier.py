@@ -2,10 +2,8 @@
 Slack通知モジュール
 """
 
-import os
-import json
 import requests
-from typing import Dict, Any, Optional
+from typing import Optional
 
 
 class SlackNotifier:
@@ -30,15 +28,10 @@ class SlackNotifier:
         Returns:
             送信成功フラグ
         """
-        payload = {
-            "text": message
-        }
-
         try:
             response = requests.post(
                 self.webhook_url,
-                data=json.dumps(payload),
-                headers={"Content-Type": "application/json"},
+                json={"text": message},
                 timeout=10
             )
             response.raise_for_status()
@@ -89,19 +82,4 @@ class SlackNotifier:
         ])
 
         message = "\n".join(message_parts)
-
-        payload = {
-            "text": message
-        }
-
-        try:
-            response = requests.post(
-                self.webhook_url,
-                data=json.dumps(payload),
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            response.raise_for_status()
-            return response.text == "ok"
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Slack notification failed: {e}")
+        return self.send_simple_message(message)

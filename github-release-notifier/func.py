@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from collections import namedtuple
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fdk import response
 
@@ -50,20 +51,14 @@ def _extract_release_info(release_data: dict) -> ReleaseInfo:
 
 def _summarize_single_release(
     release_data: dict,
-    llm_summarizer: LLMSummarizer,
-    openai_model: str,
-    index: int,
-    total: int
-) -> tuple[dict, str, str]:
+    llm_summarizer: LLMSummarizer
+) -> tuple[dict, Optional[str], Optional[str]]:
     """
     単一のリリースを要約（スレッドプール用）
 
     Args:
         release_data: リリースデータ（notification + release）
         llm_summarizer: LLM要約クライアント
-        openai_model: 使用するOpenAIモデル名（未使用だがシグネチャ保持のため残す）
-        index: インデックス（未使用だがシグネチャ保持のため残す）
-        total: 総数（未使用だがシグネチャ保持のため残す）
 
     Returns:
         (リリースデータ, 要約, エラーメッセージ)
@@ -83,67 +78,79 @@ def _summarize_single_release(
         return (release_data, None, error_msg)
 
 
-def _summarize_all_releases_parallel(
+def summarize_releases_parallel(
     release_notifications: list,
     llm_summarizer: LLMSummarizer,
-    logger,
-    openai_model: str
-) -> list[tuple[dict, str, str]]:
+    logger: logging.Logger,
+    max_workers: int = 10
+) -> list[tuple[dict, Optional[str], Optional[str]]]:
     """
     全てのリリースを並列要約（ThreadPoolExecutor使用）
+
+    OCI Functions環境では asyncio.run() が動作しないため、ThreadPoolExecutor を使用する。
+    func.py と local_test.py の両方から利用する。
 
     Args:
         release_notifications: リリース通知リスト
         llm_summarizer: LLM要約クライアント
         logger: ロガー
-        openai_model: 使用するOpenAIモデル名
+        max_workers: 並列実行数
 
     Returns:
-        [(リリースデータ, 要約, エラーメッセージ), ...]
+        [(リリースデータ, 要約, エラーメッセージ), ...]（入力と同じ順序）
     """
-    logger.info(f"Starting parallel summarization for {len(release_notifications)} releases")
+    total = len(release_notifications)
+    logger.info(f"Starting parallel summarization for {total} releases")
 
-    # 結果を格納する辞書（インデックスで順序を保持）
-    results_dict = {}
+    # 入力と同じ順序で結果を保持する
+    results: list = [None] * total
 
-    # ThreadPoolExecutorで並列実行
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        # 全てのタスクを投入
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_index = {
-            executor.submit(
-                _summarize_single_release,
-                release_data,
-                llm_summarizer,
-                openai_model,
-                idx,
-                len(release_notifications)
-            ): idx
-            for idx, release_data in enumerate(release_notifications, 1)
+            executor.submit(_summarize_single_release, release_data, llm_summarizer): idx
+            for idx, release_data in enumerate(release_notifications)
         }
 
         # 完了したタスクから結果を収集
         for future in as_completed(future_to_index):
-            index = future_to_index[future]
+            idx = future_to_index[future]
+            label = f"[{idx + 1}/{total}]"
             try:
                 result = future.result()
-                results_dict[index] = result
-                release_data, summary, error_msg = result
-                info = _extract_release_info(release_data)
-
-                if error_msg:
-                    logger.error(f"  [{index}/{len(release_notifications)}] Error: {info.repository_name} {info.tag_name}")
-                else:
-                    logger.info(f"  [{index}/{len(release_notifications)}] Completed: {info.repository_name} {info.tag_name} ({len(summary)} chars)")
             except Exception as e:
-                logger.error(f"  [{index}/{len(release_notifications)}] Unexpected error: {e}")
-                # エラーの場合は空の結果を格納
-                results_dict[index] = (release_notifications[index-1], None, str(e))
+                logger.error(f"  {label} Unexpected error: {e}")
+                results[idx] = (release_notifications[idx], None, str(e))
+                continue
 
-    # インデックス順にソートして結果を返す
-    results = [results_dict[i] for i in sorted(results_dict.keys())]
-    logger.info(f"Completed parallel summarization for {len(release_notifications)} releases")
+            results[idx] = result
+            release_data, summary, error_msg = result
+            info = _extract_release_info(release_data)
+            if error_msg:
+                logger.error(f"  {label} Error: {info.repository_name} {info.tag_name}")
+            else:
+                logger.info(f"  {label} Completed: {info.repository_name} {info.tag_name} ({len(summary)} chars)")
 
+    logger.info(f"Completed parallel summarization for {total} releases")
     return results
+
+
+def order_releases(release_notifications: list, test_mode: bool) -> list:
+    """
+    処理対象のリリースを並べ替え・絞り込みする
+
+    GitHubの通知は新しい順に返るため、通常モードでは古い順に並べ替える。
+    テストモードでは先頭（最新）の1件のみに絞る。
+
+    Args:
+        release_notifications: リリース通知リスト（新しい順）
+        test_mode: テストモードかどうか
+
+    Returns:
+        処理対象のリリース通知リスト
+    """
+    if test_mode:
+        return release_notifications[:1]
+    return release_notifications[::-1]
 
 
 def handler(ctx, data: io.BytesIO = None):
@@ -153,7 +160,7 @@ def handler(ctx, data: io.BytesIO = None):
     環境変数:
         GITHUB_TOKEN: GitHub Personal Access Token
         OPENAI_API_KEY: OpenAI API Key
-        OPENAI_MODEL: OpenAI モデル名（デフォルト: gpt-5-mini）
+        OPENAI_MODEL: OpenAI モデル名（デフォルト: gpt-6-luna）
         SLACK_WEBHOOK_URL: Slack Incoming Webhook URL
 
     ペイロード（JSON）:
@@ -166,7 +173,7 @@ def handler(ctx, data: io.BytesIO = None):
     # 環境変数から設定を取得
     github_token = os.getenv("GITHUB_TOKEN")
     openai_api_key = os.getenv("OPENAI_API_KEY")
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-6-luna")
     slack_webhook_url = os.getenv("SLACK_WEBHOOK_URL")
 
     # 必須環境変数のチェック
@@ -187,7 +194,7 @@ def handler(ctx, data: io.BytesIO = None):
             test_mode = body.get("test_mode", False)
             since_hours = body.get("since_hours", 24)
             logger.info(f"Payload: test_mode={test_mode}, since_hours={since_hours}")
-    except (Exception, ValueError) as ex:
+    except Exception as ex:
         logger.warning(f"Error parsing payload (using defaults): {ex}")
 
     try:
@@ -213,24 +220,19 @@ def handler(ctx, data: io.BytesIO = None):
                 "sent": 0
             })
 
-        # テストモードの場合は1件のみに制限
+        # テストモードは1件のみ、通常モードは古い順に処理
+        release_notifications = order_releases(release_notifications, test_mode)
         if test_mode:
-            release_notifications = release_notifications[:1]
             logger.info("Test mode: limiting to 1 notification")
         else:
-            # 通常モードの場合は古い順に処理（リストを逆順にする）
-            release_notifications = release_notifications[::-1]
             logger.info("Processing notifications in chronological order (oldest first)")
 
-        # 全てのリリースを並列で要約（ThreadPoolExecutor使用）
-        logger.info("Starting parallel summarization...")
-        summarization_results = _summarize_all_releases_parallel(
+        # 全てのリリースを並列で要約
+        summarization_results = summarize_releases_parallel(
             release_notifications=release_notifications,
             llm_summarizer=llm_summarizer,
-            logger=logger,
-            openai_model=openai_model
+            logger=logger
         )
-        logger.info("Parallel summarization completed")
 
         # 要約結果を古い順にSlackに送信
         sent_count = 0
@@ -259,11 +261,11 @@ def handler(ctx, data: io.BytesIO = None):
 
                 if success:
                     sent_count += 1
-                    logger.info(f"  ✓ Successfully sent to Slack")
+                    logger.info("  ✓ Successfully sent to Slack")
                 else:
                     error_msg = f"{info.repository_name} {info.tag_name}: Slack send failed"
                     errors.append(error_msg)
-                    logger.error(f"  ✗ Failed to send to Slack")
+                    logger.error("  ✗ Failed to send to Slack")
 
             except Exception as e:
                 error_msg = f"{info.repository_name} {info.tag_name}: Slack error: {str(e)}"

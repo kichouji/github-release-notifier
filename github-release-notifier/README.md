@@ -6,7 +6,7 @@ GitHubでウォッチしているOSSの新しいリリース情報を、LLMで�
 
 - 24時間以内のGitHub Notificationsを取得
 - リリース通知のみをフィルタリング
-- OpenAI（LangChain）でリリースノートを日本語要約
+- OpenAI APIでリリースノートを日本語要約
 - Slackに通知（プレーンテキスト形式）
 - テストモード対応（1件のみ送信）
 
@@ -19,7 +19,7 @@ OCI Functionsのアプリケーション設定で以下の環境変数を設定�
 | `GITHUB_TOKEN` | GitHub Personal Access Token（`notifications`スコープ） | ✓ |
 | `OPENAI_API_KEY` | OpenAI API Key | ✓ |
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL | ✓ |
-| `OPENAI_MODEL` | OpenAIモデル名（デフォルト: `gpt-5-mini`） | |
+| `OPENAI_MODEL` | OpenAIモデル名（デフォルト: `gpt-6-luna`） | |
 
 ## デプロイ方法
 
@@ -48,7 +48,7 @@ fn create app github-release-app --annotation oracle.com/oci/subnetIds='["<subne
 fn config app github-release-app GITHUB_TOKEN "your_github_token"
 fn config app github-release-app OPENAI_API_KEY "your_openai_api_key"
 fn config app github-release-app SLACK_WEBHOOK_URL "your_slack_webhook_url"
-fn config app github-release-app OPENAI_MODEL "gpt-5-mini"
+fn config app github-release-app OPENAI_MODEL "gpt-6-luna"
 ```
 
 ### 4. 関数のデプロイ
@@ -73,7 +73,7 @@ pip install -r requirements.txt
 export GITHUB_TOKEN='your_github_token'
 export OPENAI_API_KEY='your_openai_api_key'
 export SLACK_WEBHOOK_URL='your_slack_webhook_url'
-export OPENAI_MODEL='gpt-5-mini'
+export OPENAI_MODEL='gpt-6-luna'
 ```
 
 ### ローカルテストの実行方法
